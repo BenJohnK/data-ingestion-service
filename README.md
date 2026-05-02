@@ -1,78 +1,127 @@
 # data-ingestion-service
 
-Data Ingestion Service – Approach
+## Data Ingestion Service – Approach
 
-1. High-Level Design
+---
 
-I will build a backend API using FastAPI to handle CSV uploads for three data types: stores, users, and store-user mappings. Each file will be processed independently through a structured pipeline:
+## 1. High-Level Design
 
-Upload → Stream Read (chunked) → Row Validation → Data Normalization → Lookup Resolution (get-or-create) → Batch Insert → Error Reporting
+I will build a backend API using **FastAPI** to handle CSV uploads for three data types:
+- Stores  
+- Users  
+- Store-User Mappings  
 
-The system will expose separate endpoints for each file type and enforce processing order (stores/users before mappings).
+Each file will be processed through a structured pipeline:
 
-2. Validation Strategy
+Upload → Stream Read (Chunked) → Row Validation → Data Normalization → Lookup Resolution (Get-or-Create) → Batch Insert → Error Reporting
 
-Each row will undergo strict validation before ingestion:
+The system exposes separate endpoints for each file type and enforces processing order:
+- Stores and Users → first  
+- Store-User Mappings → after dependencies are available  
 
-Required fields: Ensuring mandatory columns are present
-Data types: Integers, floats, booleans, and dates validated
-Format checks: Email and phone number validation
-Length constraints: Enforcing column limits
-Uniqueness: Within file (e.g., duplicate usernames/store_ids) and database-level constraints
+---
 
-Validation errors will be collected per row with details: row number, column, and reason.
+## 2. Validation Strategy
 
-3. Data Normalization & Lookup Handling
+Each row undergoes strict validation before ingestion:
 
-Lookup tables (store_brands, store_types, cities, states, countries, regions) will be populated dynamically using a get-or-create approach.
+- **Required fields**: Ensuring mandatory columns are present  
+- **Data types**: Integers, floats, booleans, and dates validated  
+- **Format checks**: Email and phone number validation  
+- **Length constraints**: Enforcing column limits  
+- **Uniqueness**:  
+  - Within file (e.g., duplicate usernames, store_ids)  
+  - At database level (unique constraints)  
 
-Before lookup:
+Validation errors are collected per row with:
+- Row number  
+- Column name  
+- Reason  
 
-Trim whitespace (strip())
-Convert to lowercase for consistency
+---
 
-To optimize performance:
+## 3. Data Normalization & Lookup Handling
 
-Maintain an in-memory cache (dictionary) for each lookup table
-Avoid repeated database queries for the same values
+Lookup tables:
+- `store_brands`
+- `store_types`
+- `cities`
+- `states`
+- `countries`
+- `regions`
+
+These are populated dynamically using a **get-or-create** approach.
+
+### Normalization steps:
+- Trim whitespace (`strip()`)  
+- Convert to lowercase for consistency  
+
+### Performance optimization:
+- Maintain an **in-memory cache (dictionary)** per lookup table  
+- Avoid repeated database queries for identical values  
 
 This ensures consistent and deduplicated reference data.
 
-4. Failure Handling Strategy
+---
 
-I will skip invalid rows and ingest valid ones.
+## 4. Failure Handling Strategy
 
-Reasoning:
+Invalid rows will be **skipped**, while valid rows are ingested.
 
-Prevents blocking large uploads due to a few bad rows
-Aligns with real-world ingestion systems
-Provides better usability for clients
+### Reasoning:
+- Prevents blocking large uploads due to a few bad rows  
+- Aligns with real-world ingestion systems  
+- Improves usability for clients  
 
-All failed rows will be returned in a structured error report (JSON or downloadable file), enabling correction and re-upload.
+All failed rows are returned in a structured error report:
+- JSON response or downloadable file  
+- Includes row number, column, and reason  
 
-5. Performance Strategy (500K Rows)
+---
 
-To handle large files efficiently:
+## 5. Performance Strategy (Handling 500K Rows)
 
-Streaming CSV reading to avoid loading entire file into memory
-Chunk processing (e.g., 1000–5000 rows per batch)
-Bulk insert operations using ORM batch methods or raw SQL
-Lookup caching to reduce database round trips
+To ensure scalability:
 
-This ensures scalability and efficient memory usage.
+- **Streaming CSV reading** (avoid full memory load)  
+- **Chunk processing** (e.g., 1000–5000 rows per batch)  
+- **Bulk insert operations** using ORM batch methods or raw SQL  
+- **Lookup caching** to minimize database round trips  
 
-6. Mapping File Handling
+This ensures efficient memory usage and high throughput.
 
-The store-user mapping file will only be processed after stores and users are ingested.
+---
 
-Validate existence of referenced store_id and user_id
-Enforce uniqueness constraint (user_id, store_id, date)
-Invalid references will be reported as errors
+## 6. Mapping File Handling
 
-7. Tradeoffs Considered
-Skip vs Reject entire file: Skipping improves usability and throughput but requires detailed error tracking
-Bulk insert vs row-by-row: Bulk insert significantly improves performance at the cost of slightly more complex logic
-Normalization strictness: Lowercasing ensures consistency but may lose original casing; chosen for data integrity
+The store-user mapping file is processed **only after** stores and users are ingested.
 
+Validation includes:
+- Existence of referenced `store_id` and `user_id`  
+- Uniqueness constraint: `(user_id, store_id, date)`  
 
-This design focuses on correctness, scalability, and clarity of failure reporting. In my previous project, I have implemented similar asynchronous and batch-processing workflows using FastAPI, Celery, and Redis for handling large-scale operations reliably, which influenced my approach to designing this ingestion pipeline.
+Invalid references are captured and reported as errors.
+
+---
+
+## 7. Tradeoffs Considered
+
+- **Skip vs Reject entire file**  
+  Skipping improves usability and throughput but requires detailed error tracking  
+
+- **Bulk insert vs Row-by-row insert**  
+  Bulk insert significantly improves performance at the cost of slightly more complex logic  
+
+- **Normalization strictness**  
+  Lowercasing ensures consistency but may lose original casing; chosen for data integrity  
+
+---
+
+## Conclusion
+
+This design focuses on:
+- **Correctness**
+- **Scalability**
+- **Clear failure reporting**
+
+In my previous work, I have implemented similar large-scale processing systems using **FastAPI, Celery, and Redis**, which influenced this approach toward building a reliable and performant ingestion pipeline.
