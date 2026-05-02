@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from app.models.base import Base
 from app.db.session import engine
-from app.models import lookup
+from app.models import lookup, store, user, mapping
 
 app = FastAPI(title="Data Ingestion Service")
 
