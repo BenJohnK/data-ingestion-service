@@ -1,13 +1,21 @@
 import csv
-from io import StringIO
+import io
 
 
 def read_csv_in_chunks(file, chunk_size=1000):
     """
-    Generator that yields rows in chunks
+    Stream CSV file and yield chunks of rows
     """
-    decoded = file.file.read().decode("utf-8")
-    reader = csv.DictReader(StringIO(decoded))
+
+    # Reset pointer just in case
+    file.file.seek(0)
+
+    # csv can read text, so decode line-by-line
+    def line_generator():
+        for line in file.file:
+            yield line.decode("utf-8") # This way, we can ensure that only one row is in the memory (plus the chunk buffer).
+
+    reader = csv.DictReader(line_generator()) # DictReader is streaming friendly
 
     chunk = []
 
