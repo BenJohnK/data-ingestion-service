@@ -1,4 +1,5 @@
 import re
+from datetime import datetime
 
 ALLOWED_USER_TYPES = {1, 2, 3, 7}
 
@@ -45,6 +46,16 @@ def validate_float(field_name, value, errors):
 def validate_boolean(field_name, value, errors):
     if str(value).lower() not in {"true", "false", "1", "0"}:
         errors.append((field_name, "Invalid boolean value"))
+
+
+def validate_date(field_name, value, errors):
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError:
+        errors.append((field_name, "Invalid date format (expected YYYY-MM-DD)"))
+        return None
 
 
 def validate_store_row(row_number, row):
@@ -137,6 +148,43 @@ def validate_user_row(row_number, row):
         "user_type": int(row.get("user_type") or 1),
         "phone_number": row.get("phone_number", "").strip(),
         "supervisor_username": row.get("supervisor_username", "").strip(),
+        "is_active": str(row.get("is_active", "true")).lower() in ("true", "1")
+    }
+
+    return True, cleaned_data
+
+
+def validate_pjp_row(row_number, row):
+    errors = []
+
+    # Required fields
+    validate_required("username", row.get("username"), errors)
+    validate_required("store_id", row.get("store_id"), errors)
+
+    # Length checks
+    validate_length("username", row.get("username"), 150, errors)
+    validate_length("store_id", row.get("store_id"), 255, errors)
+
+    # Date validation
+    parsed_date = None
+    if row.get("date"):
+        parsed_date = validate_date("date", row.get("date"), errors)
+
+    # Boolean validation
+    if row.get("is_active"):
+        validate_boolean("is_active", row.get("is_active"), errors)
+
+    if errors:
+        return False, {
+            "row": row_number,
+            "errors": [{"field": f, "message": m} for f, m in errors]
+        }
+
+    # Cleaned data
+    cleaned_data = {
+        "username": row.get("username").strip(),
+        "store_id": row.get("store_id").strip(),
+        "date": parsed_date,
         "is_active": str(row.get("is_active", "true")).lower() in ("true", "1")
     }
 
