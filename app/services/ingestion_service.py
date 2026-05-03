@@ -10,6 +10,8 @@ from app.services.validation_service import validate_user_row
 from app.services.validation_service import validate_pjp_row
 from app.models.mapping import PermanentJourneyPlan
 from sqlalchemy import select, tuple_
+import csv
+from datetime import datetime
 
 
 async def process_store_file(file: UploadFile):
@@ -18,9 +20,16 @@ async def process_store_file(file: UploadFile):
         "valid_rows": 0,
         "invalid_rows": 0,
         "chunks_processed": 0,
-        "errors": []
     }
 
+    # Create error CSV file
+    error_filename = f"errors_store_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    error_file = open(error_filename, "w", newline="")
+    error_writer = csv.writer(error_file)
+    error_writer.writerow(["row", "field", "message"])
+
+    # Request-scoped in-memory cache (name -> id) to avoid repeated DB lookups
+    # for reference tables (store_brand, city, etc.) within a single ingestion request.
     lookup_cache = {
         "store_brands": {},
         "store_types": {},
@@ -28,9 +37,9 @@ async def process_store_file(file: UploadFile):
         "states": {},
         "countries": {},
         "regions": {}
-    } # request-scoped cache
+    }
 
-    seen_store_ids = set()  # 🔥 in-file dedup
+    seen_store_ids = set()
 
     db = SessionLocal()
 
@@ -42,7 +51,9 @@ async def process_store_file(file: UploadFile):
             valid_rows = []
             chunk_errors = []
 
+            # =========================
             # Step 1: Validation + in-file dedup
+            # =========================
             for row_number, row in chunk:
                 is_valid, result = validate_store_row(row_number, row)
 
@@ -60,17 +71,25 @@ async def process_store_file(file: UploadFile):
                     continue
 
                 seen_store_ids.add(store_id)
-                valid_rows.append(result)
+                valid_rows.append((row_number, result))  # keep row_number
 
-            results["valid_rows"] += len(valid_rows)
+            # =========================
+            # Write validation errors to CSV
+            # =========================
+            for err in chunk_errors:
+                row_num = err.get("row")
+                for e in err["errors"]:
+                    error_writer.writerow([row_num, e["field"], e["message"]])
+
             results["invalid_rows"] += len(chunk_errors)
-            results["errors"].extend(chunk_errors)
 
             if not valid_rows:
                 continue
 
+            # =========================
             # Step 2: DB-level dedup
-            store_ids = [row["store_id"] for row in valid_rows]
+            # =========================
+            store_ids = [row["store_id"] for _, row in valid_rows]
 
             existing_store_ids = set(
                 db.execute(
@@ -78,12 +97,31 @@ async def process_store_file(file: UploadFile):
                 ).scalars().all()
             )
 
-            # Filter out already existing
-            filtered_rows = [
-                row for row in valid_rows
-                if row["store_id"] not in existing_store_ids
-            ]
+            filtered_rows = []
+            db_duplicate_errors = []
 
+            for row_number, row in valid_rows:
+                if row["store_id"] in existing_store_ids:
+                    db_duplicate_errors.append({
+                        "row": row_number,
+                        "errors": [{"field": "store_id", "message": "Already exists in DB"}]
+                    })
+                else:
+                    filtered_rows.append(row)
+
+            # Write DB duplicate errors
+            for err in db_duplicate_errors:
+                for e in err["errors"]:
+                    error_writer.writerow([err["row"], e["field"], e["message"]])
+
+            results["invalid_rows"] += len(db_duplicate_errors)
+
+            if not filtered_rows:
+                continue
+
+            # =========================
+            # Step 3: Create ORM objects
+            # =========================
             store_objects = []
 
             for clean_row in filtered_rows:
@@ -102,15 +140,25 @@ async def process_store_file(file: UploadFile):
 
                 store_objects.append(store)
 
+            # =========================
+            # Step 4: Bulk insert
+            # =========================
             if store_objects:
                 db.bulk_save_objects(store_objects)
                 db.commit()
 
+                results["valid_rows"] += len(store_objects)
+
     except Exception as e:
         db.rollback()
         raise e
+
     finally:
         db.close()
+        error_file.close()
+
+    # Return file reference instead of huge JSON
+    results["error_file"] = error_filename
 
     return results
 
@@ -121,11 +169,18 @@ async def process_user_file(file: UploadFile):
         "valid_rows": 0,
         "invalid_rows": 0,
         "chunks_processed": 0,
-        "errors": []
     }
 
-    seen_usernames = set()  # in-file dedup
-    supervisor_mappings = []  # 🔥 only store needed rows
+    # Error CSV
+    error_filename = f"errors_user_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    error_file = open(error_filename, "w", newline="")
+    error_writer = csv.writer(error_file)
+    error_writer.writerow(["row", "field", "message"])
+
+    seen_usernames = set()
+
+    # store only required mappings WITH row number
+    supervisor_mappings = []
 
     db = SessionLocal()
 
@@ -157,17 +212,23 @@ async def process_user_file(file: UploadFile):
                     continue
 
                 seen_usernames.add(username)
-                valid_rows.append(result)
+                valid_rows.append((row_number, result))  # keep row_number
 
-            results["valid_rows"] += len(valid_rows)
+            # write validation errors
+            for err in chunk_errors:
+                row_num = err.get("row")
+                for e in err["errors"]:
+                    error_writer.writerow([row_num, e["field"], e["message"]])
+
             results["invalid_rows"] += len(chunk_errors)
-            results["errors"].extend(chunk_errors)
 
             if not valid_rows:
                 continue
 
+            # =========================
             # DB-level dedup
-            usernames = [row["username"] for row in valid_rows]
+            # =========================
+            usernames = [row["username"] for _, row in valid_rows]
 
             existing_usernames = set(
                 db.execute(
@@ -175,17 +236,34 @@ async def process_user_file(file: UploadFile):
                 ).scalars().all()
             )
 
-            filtered_rows = [
-                row for row in valid_rows
-                if row["username"] not in existing_usernames
-            ]
+            filtered_rows = []
+            db_duplicate_errors = []
+
+            for row_number, row in valid_rows:
+                if row["username"] in existing_usernames:
+                    db_duplicate_errors.append({
+                        "row": row_number,
+                        "errors": [{"field": "username", "message": "Already exists in DB"}]
+                    })
+                else:
+                    filtered_rows.append((row_number, row))
+
+            # write DB duplicate errors
+            for err in db_duplicate_errors:
+                for e in err["errors"]:
+                    error_writer.writerow([err["row"], e["field"], e["message"]])
+
+            results["invalid_rows"] += len(db_duplicate_errors)
 
             if not filtered_rows:
                 continue
 
+            # =========================
+            # Insert users
+            # =========================
             user_objects = []
 
-            for clean_row in filtered_rows:
+            for row_number, clean_row in filtered_rows:
                 user = User(
                     username=clean_row["username"],
                     first_name=clean_row["first_name"],
@@ -194,14 +272,15 @@ async def process_user_file(file: UploadFile):
                     user_type=clean_row["user_type"],
                     phone_number=clean_row["phone_number"],
                     is_active=clean_row["is_active"],
-                    supervisor_id=None  # resolved later
+                    supervisor_id=None
                 )
 
                 user_objects.append(user)
 
-                # 🔥 Only store required mappings
+                # store mapping WITH row_number
                 if clean_row.get("supervisor_username"):
                     supervisor_mappings.append((
+                        row_number,
                         clean_row["username"],
                         clean_row["supervisor_username"]
                     ))
@@ -209,14 +288,15 @@ async def process_user_file(file: UploadFile):
             db.bulk_save_objects(user_objects)
             db.commit()
 
+            results["valid_rows"] += len(user_objects)
+
         # =========================
         # Phase 2: Resolve supervisors
         # =========================
         if supervisor_mappings:
-            # Get only needed usernames
             usernames_needed = set()
 
-            for username, supervisor_username in supervisor_mappings:
+            for _, username, supervisor_username in supervisor_mappings:
                 usernames_needed.add(username)
                 usernames_needed.add(supervisor_username)
 
@@ -228,17 +308,16 @@ async def process_user_file(file: UploadFile):
 
             updates = []
 
-            for username, supervisor_username in supervisor_mappings:
+            for row_number, username, supervisor_username in supervisor_mappings:
                 user_id = username_to_id.get(username)
                 supervisor_id = username_to_id.get(supervisor_username)
 
-                if user_id and supervisor_id:
+                if user_id:
                     updates.append({
                         "id": user_id,
                         "supervisor_id": supervisor_id
-                    })
+                    }) # As of now, if the supervisor_id is not found, the user row is not counted as invalid and it is also stored in the user table with supervisor_id as NULL.
 
-            # Bulk update (important)
             if updates:
                 db.bulk_update_mappings(User, updates)
                 db.commit()
@@ -246,8 +325,12 @@ async def process_user_file(file: UploadFile):
     except Exception as e:
         db.rollback()
         raise e
+
     finally:
         db.close()
+        error_file.close()
+
+    results["error_file"] = error_filename
 
     return results
 
@@ -258,8 +341,13 @@ async def process_pjp_file(file: UploadFile):
         "valid_rows": 0,
         "invalid_rows": 0,
         "chunks_processed": 0,
-        "errors": []
     }
+
+    # Error CSV
+    error_filename = f"errors_pjp_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    error_file = open(error_filename, "w", newline="")
+    error_writer = csv.writer(error_file)
+    error_writer.writerow(["row", "field", "message"])
 
     seen_keys = set()  # (username, store_id, date)
 
@@ -295,9 +383,15 @@ async def process_pjp_file(file: UploadFile):
                 seen_keys.add(key)
                 valid_rows.append((row_number, result))
 
+            # write validation errors
+            for err in chunk_errors:
+                row_num = err.get("row")
+                for e in err["errors"]:
+                    error_writer.writerow([row_num, e["field"], e["message"]])
+
+            results["invalid_rows"] += len(chunk_errors)
+
             if not valid_rows:
-                results["invalid_rows"] += len(chunk_errors)
-                results["errors"].extend(chunk_errors)
                 continue
 
             # =========================
@@ -321,20 +415,21 @@ async def process_pjp_file(file: UploadFile):
             # Step 3: resolve + filter invalid references
             # =========================
             resolved_rows = []
+            resolution_errors = []
 
             for row_number, row in valid_rows:
                 user_id = username_to_id.get(row["username"])
                 store_pk = storeid_to_pk.get(row["store_id"])
 
                 if not user_id:
-                    chunk_errors.append({
+                    resolution_errors.append({
                         "row": row_number,
                         "errors": [{"field": "username", "message": "User not found"}]
                     })
                     continue
 
                 if not store_pk:
-                    chunk_errors.append({
+                    resolution_errors.append({
                         "row": row_number,
                         "errors": [{"field": "store_id", "message": "Store not found"}]
                     })
@@ -350,9 +445,14 @@ async def process_pjp_file(file: UploadFile):
                     }
                 ))
 
+            # write resolution errors
+            for err in resolution_errors:
+                for e in err["errors"]:
+                    error_writer.writerow([err["row"], e["field"], e["message"]])
+
+            results["invalid_rows"] += len(resolution_errors)
+
             if not resolved_rows:
-                results["invalid_rows"] += len(chunk_errors)
-                results["errors"].extend(chunk_errors)
                 continue
 
             # =========================
@@ -379,34 +479,51 @@ async def process_pjp_file(file: UploadFile):
                 ).all()
             )
 
-            filtered_rows = [
-                (row_number, r) for row_number, r in resolved_rows
-                if (r["user_id"], r["store_id"], r["date"]) not in existing
-            ]
+            filtered_rows = []
+            db_duplicate_errors = []
+
+            for row_number, r in resolved_rows:
+                key = (r["user_id"], r["store_id"], r["date"])
+                if key in existing:
+                    db_duplicate_errors.append({
+                        "row": row_number,
+                        "errors": [{"field": "duplicate", "message": "Already exists in DB"}]
+                    })
+                else:
+                    filtered_rows.append(r)
+
+            # write DB duplicate errors
+            for err in db_duplicate_errors:
+                for e in err["errors"]:
+                    error_writer.writerow([err["row"], e["field"], e["message"]])
+
+            results["invalid_rows"] += len(db_duplicate_errors)
+
+            if not filtered_rows:
+                continue
 
             # =========================
             # Step 5: bulk insert
             # =========================
             pjp_objects = [
                 PermanentJourneyPlan(**row)
-                for _, row in filtered_rows
+                for row in filtered_rows
             ]
 
             if pjp_objects:
                 db.bulk_save_objects(pjp_objects)
                 db.commit()
 
-            # =========================
-            # Final counters
-            # =========================
-            results["valid_rows"] += len(resolved_rows)
-            results["invalid_rows"] += len(chunk_errors)
-            results["errors"].extend(chunk_errors)
+                results["valid_rows"] += len(pjp_objects)
 
     except Exception as e:
         db.rollback()
         raise e
+
     finally:
         db.close()
+        error_file.close()
+
+    results["error_file"] = error_filename
 
     return results
