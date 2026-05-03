@@ -3,6 +3,22 @@ import re
 ALLOWED_USER_TYPES = {1, 2, 3, 7}
 
 
+def validate_email(field_name, value, errors):
+    if value:
+        pattern = r"^[\w\.-]+@[\w\.-]+\.\w+$"
+        if not re.match(pattern, value):
+            errors.append((field_name, "Invalid email format"))
+
+
+def validate_user_type(field_name, value, errors):
+    try:
+        val = int(value)
+        if val not in ALLOWED_USER_TYPES:
+            errors.append((field_name, "Invalid user_type"))
+    except (ValueError, TypeError):
+        errors.append((field_name, "Invalid user_type"))
+
+
 def normalize_string(value: str):
     if value is None:
         return None
@@ -75,6 +91,52 @@ def validate_store_row(row_number, row):
         "region": normalize_string(row.get("region")),
         "latitude": float(row.get("latitude") or 0.0),
         "longitude": float(row.get("longitude") or 0.0),
+        "is_active": str(row.get("is_active", "true")).lower() in ("true", "1")
+    }
+
+    return True, cleaned_data
+
+
+def validate_user_row(row_number, row):
+    errors = []
+
+    # Required
+    validate_required("username", row.get("username"), errors)
+    validate_required("email", row.get("email"), errors)
+
+    # Length
+    validate_length("username", row.get("username"), 150, errors)
+    validate_length("first_name", row.get("first_name"), 150, errors)
+    validate_length("last_name", row.get("last_name"), 150, errors)
+    validate_length("email", row.get("email"), 254, errors)
+    validate_length("phone_number", row.get("phone_number"), 32, errors)
+
+    # Email
+    validate_email("email", row.get("email"), errors)
+
+    # User type
+    if row.get("user_type"):
+        validate_user_type("user_type", row.get("user_type"), errors)
+
+    # Boolean
+    if row.get("is_active"):
+        validate_boolean("is_active", row.get("is_active"), errors)
+
+    if errors:
+        return False, {
+            "row": row_number,
+            "errors": [{"field": f, "message": m} for f, m in errors]
+        }
+
+    # Cleaned data
+    cleaned_data = {
+        "username": row.get("username").strip(),
+        "first_name": row.get("first_name", "").strip(),
+        "last_name": row.get("last_name", "").strip(),
+        "email": row.get("email").strip().lower(),
+        "user_type": int(row.get("user_type") or 1),
+        "phone_number": row.get("phone_number", "").strip(),
+        "supervisor_username": row.get("supervisor_username", "").strip(),
         "is_active": str(row.get("is_active", "true")).lower() in ("true", "1")
     }
 
