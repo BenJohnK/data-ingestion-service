@@ -1,0 +1,51 @@
+row,field,message
+48,store_id,Duplicate in file
+82,title,This field is required
+83,latitude,Invalid float value
+282,name,Max length exceeded (255)
+334,latitude,Invalid float value
+358,latitude,Invalid float value
+446,latitude,Invalid float value
+486,store_id,This field is required
+508,store_id,Duplicate in file
+527,name,Max length exceeded (255)
+554,name,Max length exceeded (255)
+625,title,This field is required
+706,latitude,Invalid float value
+766,name,Max length exceeded (255)
+886,latitude,Invalid float value
+894,store_id,Duplicate in file
+949,latitude,Invalid float value
+1058,title,This field is required
+1105,store_id,This field is required
+1114,latitude,Invalid float value
+1119,store_id,This field is required
+1166,latitude,Invalid float value
+1181,name,Max length exceeded (255)
+1246,name,Max length exceeded (255)
+1296,name,Max length exceeded (255)
+1392,store_id,This field is required
+1438,name,Max length exceeded (255)
+1459,latitude,Invalid float value
+1549,store_id,This field is required
+1571,title,This field is required
+1650,name,Max length exceeded (255)
+1654,store_id,This field is required
+1734,store_id,This field is required
+1759,title,This field is required
+1764,latitude,Invalid float value
+1989,store_id,Duplicate in file
+2001,latitude,Invalid float value
+2060,latitude,Invalid float value
+2238,store_id,This field is required
+2345,latitude,Invalid float value
+2347,store_id,This field is required
+2582,store_id,This field is required
+2772,store_id,Duplicate in file
+2801,store_id,Duplicate in file
+2845,store_id,Duplicate in file
+2887,store_id,This field is required
+2896,latitude,Invalid float value
+2940,title,This field is required
+3059,latitude,Invalid float value
+3120,latitude,Invalid float value

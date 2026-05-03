@@ -117,6 +117,21 @@ Invalid references are captured and reported as errors.
 
 ---
 
+## 8. Supervisor Resolution Strategy (Users)
+
+User data includes a `supervisor_username` instead of a direct foreign key.
+
+To handle this efficiently:
+
+- **Phase 1**: Insert all valid users with `supervisor_id = NULL`
+- **Phase 2**: Resolve supervisor relationships using a username → id map
+
+This avoids:
+- Multiple database lookups per row
+- Ordering issues where supervisors may appear later in the file
+
+This two-phase approach ensures correctness while maintaining performance.
+
 ## Conclusion
 
 This design focuses on:
@@ -125,3 +140,117 @@ This design focuses on:
 - **Clear failure reporting**
 
 In my previous work, I have implemented similar large-scale processing systems using **FastAPI, Celery, and Redis**, which influenced this approach toward building a reliable and performant ingestion pipeline.
+
+---
+
+## Setup & Run Instructions
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/BenJohnK/data-ingestion-service.git
+cd data-ingestion-service
+```
+
+### 2. Create virtual environment
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+```
+
+### 3. Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### 4. Setup PostgreSQL
+
+- Create a database (e.g., `ingestion_db`)
+- Copy `.env.example` → `.env`
+- Update DB credentials in `.env`
+
+### 5. Run the application
+
+```bash
+uvicorn app.main:app --reload
+```
+
+---
+
+## API Endpoints
+
+### 1. Upload Stores
+
+```bash
+curl -X POST "http://127.0.0.1:8000/upload/stores" -F "file=@stores_master.csv"
+```
+
+### 2. Upload Users
+
+```bash
+curl -X POST "http://127.0.0.1:8000/upload/users" -F "file=@users_master.csv"
+```
+
+### 3. Upload Store-User Mapping (PJP)
+
+```bash
+curl -X POST "http://127.0.0.1:8000/upload/pjp" -F "file=@store_user_mapping.csv"
+```
+
+### 4. Download error file (csv)
+
+```bash
+curl -X GET "http://127.0.0.1:8000/download-errors/<error_filename.csv>"
+```
+
+---
+
+## Performance Evidence
+
+A performance test was conducted using the provided `stores_master_500k.csv` file.
+
+### Results
+
+- **Total rows processed:** 500,000  
+- **Valid rows ingested:** 492,846  
+- **Invalid rows skipped:** 7,154  
+- **Total processing time:** 36.94 seconds  
+- **Chunks processed:** 500
+
+### 💻 Environment
+
+Tested locally on:
+- Ubuntu 24.04
+- Intel i5 (13th Gen)
+- 16GB RAM
+
+### ⚙️ Processing Strategy
+
+- **Synchronous processing** using FastAPI endpoint  
+- **Chunked CSV reading** (streaming, avoids loading full file into memory)  
+- **Batch processing per chunk**  
+- **Bulk insert operations** using SQLAlchemy (`bulk_save_objects`)  
+- **In-file deduplication** to prevent duplicate entries  
+- **Database-level deduplication** using indexed lookups  
+- **Lookup caching (in-memory, request-scoped)** to minimize repeated DB queries  
+
+### ❌ Failure Handling
+
+- Invalid rows are **skipped**, not blocking ingestion  
+- Detailed error reporting is generated with:
+  - Row number  
+  - Field name  
+  - Error reason  
+
+- Full error report is generated as a CSV file:
+  - Example: `errors_store_<timestamp>.csv`
+
+### 📎 Evidence
+
+- Execution proof:  
+  `performance_evidence/ingestion_500k_screenshot.png`
+
+- Sample error report (trimmed):  
+  `performance_evidence/sample_error_report.csv`
